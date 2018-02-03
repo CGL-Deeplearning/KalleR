@@ -322,9 +322,9 @@ class ImageCreator:
         for read in reads:
             if i > IMAGE_HEIGHT:
                 break
-            self.read_id_in_allele_position.append(read.query_name)
             # check if the mapping quality of the read is above threshold
             if read.mapping_quality > DEFAULT_MIN_MAP_QUALITY:
+                self.read_id_in_allele_position.append(read.query_name)
                 self._process_read(read=read)
                 i += 1
 

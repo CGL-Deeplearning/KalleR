@@ -43,6 +43,7 @@ class Bed2ImageAPI:
         :return:
         """
         for record in self.bed_handler.all_bed_records:
+            print(record)
             self.create_image(self.bam_handler, self.fasta_handler, record)
 
 
