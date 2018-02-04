@@ -394,6 +394,9 @@ class ImageCreator:
             if i in self.longest_insert_in_position:
                 for j in range(self.longest_insert_in_position[i]):
                     ref_row[self.ref_to_index_projection[i]+j+1] = ImageChannels.get_ref_channels('*')
+
+        if len(ref_row) > IMAGE_WIDTH:
+            ref_row = ref_row[:IMAGE_WIDTH]
         return ref_row
 
     def _if_read_supports_alt(self, read_id, position, alt):
@@ -472,6 +475,8 @@ class ImageCreator:
                     image_row[row_index] = channels
                     row_index += 1
 
+        if len(image_row) > IMAGE_WIDTH:
+            image_row = image_row[:IMAGE_WIDTH]
         return image_row
 
     def generate_read_pileups(self, left_pos, right_pos, position, alts):
@@ -487,6 +492,9 @@ class ImageCreator:
         image_rows = list()
         for read_id in all_read_ids:
             image_rows.append(self.get_read_row(read_id, left_pos, right_pos, alts, position))
+            if len(image_rows) == IMAGE_HEIGHT - REF_BAND:
+                break
+
         return image_rows
 
     def project_ref_positions(self, left_pos, right_pos):
@@ -528,14 +536,15 @@ class ImageCreator:
         self._update_ref_sequence(left_pos, right_pos)
         self.project_ref_positions(left_pos, right_pos)
         img_data = list()
-
         for i in range(REF_BAND):
             img_data.append(self.get_reference_row(left_pos, right_pos))
 
         img_data = img_data + self.generate_read_pileups(left_pos, right_pos, position, [alts])
+
         while len(img_data) < IMAGE_HEIGHT:
             image_row = [ImageChannels.get_empty_channels() for i in range(IMAGE_WIDTH)]
             img_data.append(image_row)
 
         image_array = np.array(img_data).astype(np.uint8)
+
         return image_array
