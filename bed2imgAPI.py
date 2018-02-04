@@ -42,7 +42,8 @@ class Bed2ImageAPI:
         Test the API
         :return:
         """
-        for record in self.bed_handler.all_bed_records:
+        for i, record in enumerate(self.bed_handler.all_bed_records):
+            print(i, record)
             self.create_image(self.bam_handler, self.fasta_handler, record)
 
 

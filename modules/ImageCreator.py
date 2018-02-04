@@ -343,10 +343,11 @@ class ImageCreator:
 
             distance_array[pos] = distance_array[pos-1] + 1
 
-        if self.leftmost_alignment_position - self.rightmost_alignment_position + 1 <= IMAGE_WIDTH:
+        if self.rightmost_alignment_position - self.leftmost_alignment_position + 1 <= IMAGE_WIDTH:
             return self.leftmost_alignment_position, self.rightmost_alignment_position
 
-        left_side = right_side = int(IMAGE_WIDTH-IMAGE_BUFFER / 2)
+        left_side = right_side = int((IMAGE_WIDTH-IMAGE_BUFFER) / 2)
+
         left_val = max(0, distance_array[position] - left_side)
         right_val = min(len(distance_array.keys()), distance_array[position] + right_side)
         left_pos, right_pos = position, position

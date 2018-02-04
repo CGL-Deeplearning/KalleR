@@ -22,10 +22,6 @@ class DataSetLoader(Dataset):
         label = torch.LongTensor([label])
         if self.transform is not None:
             img = self.transform(img)
-
-        if img.size(0) != 6 or img.size(1) != 300 or img.size(2) != 300 or label.size(0) != 1:
-            print(bed_record)
-            print(img.size(), label.size())
         return img, label, bed_record
 
     def __len__(self):
