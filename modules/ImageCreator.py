@@ -147,7 +147,7 @@ class ImageCreator:
 
         for i in range(start, stop):
             read_base = "*"
-            base_quality = base_qualities[i - pos]
+            base_quality = 0
             # update the base dictionary
             self._update_base_dictionary(i, read_name, read_base, mapping_quality, base_quality, direction, CIGAR_DEL)
 

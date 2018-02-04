@@ -141,7 +141,7 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
             total_loss += loss.data[0]
             batches_done += 1
 
-            if batches_done % 1 == 0:
+            if batches_done % 1000 == 0:
                 avg_loss = total_loss / total_images if total_images else 0
                 print(str(epoch + 1) + "\t" + str(i + 1) + "\t" + str(avg_loss))
                 sys.stderr.write(TextColor.BLUE + "EPOCH: " + str(epoch+1) + " Batches done: " + str(batches_done)
