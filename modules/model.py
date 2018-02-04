@@ -98,7 +98,6 @@ class Model(nn.Module):
         return x
 
     def forward(self, x):
-        print(x.size())
         out = x * 255
         out = self.residual_layer(out, self.identity1, self.cell1)
         out = self.residual_layer(out, self.identity2, self.cell2)
@@ -110,6 +109,5 @@ class Model(nn.Module):
         sizes = out.size()
         out = out.view(sizes[0], sizes[1] * sizes[2] * sizes[3])
         out = self.fully_connected_layer(out)
-        print(out.size())
 
         return out
