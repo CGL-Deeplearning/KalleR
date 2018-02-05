@@ -63,7 +63,7 @@ def holdout_test(bam_file, ref_file, holdout_test_file, batch_size, gpu_mode, tr
         total_loss += loss.data[0]
 
         batches_done += 1
-        if batches_done % 100 == 0:
+        if batches_done % 10 == 0:
             sys.stderr.write(str(confusion_matrix.conf)+"\n")
             sys.stderr.write(TextColor.BLUE + 'Batches done: ' + str(batches_done) +
                              " / " + str(len(validation_loader)) + "\n" + TextColor.END)
@@ -143,7 +143,7 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
             total_loss += loss.data[0]
             batches_done += 1
 
-            if batches_done % 100 == 0:
+            if batches_done % 10 == 0:
                 avg_loss = total_loss / total_images if total_images else 0
                 print(str(epoch + 1) + "\t" + str(i + 1) + "\t" + str(avg_loss))
                 sys.stderr.write(TextColor.BLUE + "EPOCH: " + str(epoch+1) + " Batches done: " + str(batches_done)
