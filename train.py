@@ -19,14 +19,14 @@ np.set_printoptions(threshold=np.nan)
 NUM_CLASSES = 3
 
 
-def holdout_test(bam_file, ref_file, holdout_test_file, batch_size, gpu_mode, trained_model):
+def holdout_test(bam_file, ref_file, holdout_test_file, batch_size, gpu_mode, trained_model, max_threads):
     transformations = transforms.Compose([transforms.ToTensor()])
 
     validation_data = DataSetLoader(bam_file, ref_file, holdout_test_file, transformations)
     validation_loader = DataLoader(validation_data,
                                    batch_size=batch_size,
                                    shuffle=False,
-                                   num_workers=16,
+                                   num_workers=max_threads,
                                    pin_memory=gpu_mode
                                    )
     sys.stderr.write(TextColor.PURPLE + 'Data loading finished\n' + TextColor.END)
@@ -63,8 +63,10 @@ def holdout_test(bam_file, ref_file, holdout_test_file, batch_size, gpu_mode, tr
         total_loss += loss.data[0]
 
         batches_done += 1
-        sys.stderr.write(str(confusion_matrix.conf)+"\n")
-        sys.stderr.write(TextColor.BLUE+'Batches done: ' + str(batches_done) + " / " + str(len(validation_loader)) + "\n" + TextColor.END)
+        if batches_done % 100 == 0:
+            sys.stderr.write(str(confusion_matrix.conf)+"\n")
+            sys.stderr.write(TextColor.BLUE + 'Batches done: ' + str(batches_done) +
+                             " / " + str(len(validation_loader)) + "\n" + TextColor.END)
 
     print('Test Loss: ' + str(total_loss/total_images))
     print('Confusion Matrix: \n', confusion_matrix.conf)
@@ -86,7 +88,7 @@ def save_model_checkpoint(model, output_dir, epoch, optimizer, batch):
     }, output_dir + 'checkpoint_' + str(epoch + 1) + "." + str(batch + 1) + "_params.pkl")
 
 
-def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, output_dir, gpu_mode):
+def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, output_dir, gpu_mode, max_threads):
     transformations = transforms.Compose([transforms.ToTensor()])
 
     sys.stderr.write(TextColor.PURPLE + 'Loading data\n' + TextColor.END)
@@ -94,7 +96,7 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
     train_loader = DataLoader(train_data_set,
                               batch_size=batch_size,
                               shuffle=True,
-                              num_workers=16,
+                              num_workers=max_threads,
                               pin_memory=gpu_mode
                               )
     sys.stderr.write(TextColor.PURPLE + 'Data loading finished\n' + TextColor.END)
@@ -141,15 +143,14 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
             total_loss += loss.data[0]
             batches_done += 1
 
-            if batches_done % 10 == 0:
+            if batches_done % 100 == 0:
                 avg_loss = total_loss / total_images if total_images else 0
                 print(str(epoch + 1) + "\t" + str(i + 1) + "\t" + str(avg_loss))
                 sys.stderr.write(TextColor.BLUE + "EPOCH: " + str(epoch+1) + " Batches done: " + str(batches_done)
                                  + " / " + str(len(train_loader)) + "\n" + TextColor.END)
                 sys.stderr.write(TextColor.YELLOW + " Loss: " + str(avg_loss) + "\n" + TextColor.END)
-                sys.stderr.write(TextColor.DARKCYAN + "Time Elapsed: " + str(time.time() - start_time) +
-                                 "\n" + TextColor.END)
-                start_time = time.time()
+                sys.stderr.write(TextColor.DARKCYAN + "Time Elapsed: " + str((time.time() - start_time)/60) +
+                                 " Mins \n" + TextColor.END)
 
         avg_loss = total_loss/total_images if total_images else 0
         sys.stderr.write(TextColor.BLUE + "EPOCH: " + str(epoch+1)
@@ -168,7 +169,7 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
         save_model_checkpoint(model, output_dir, epoch, optimizer, i + 1)
 
         # After each epoch do validation
-        holdout_test(bam_file, ref_file, val_bed, batch_size, gpu_mode, model)
+        holdout_test(bam_file, ref_file, val_bed, batch_size, gpu_mode, model, max_threads)
 
     sys.stderr.write(TextColor.PURPLE + 'Finished training\n' + TextColor.END)
 
@@ -251,8 +252,15 @@ if __name__ == '__main__':
         default=False,
         help="If true then cuda is on."
     )
+    parser.add_argument(
+        "--max_threads",
+        type=int,
+        required=False,
+        default=80,
+        help="Maximum number of threads to use when loading data."
+    )
     FLAGS, unparsed = parser.parse_known_args()
 
     FLAGS.model_out = directory_control(FLAGS.model_out)
     train(FLAGS.bam, FLAGS.ref, FLAGS.train_bed, FLAGS.holdout_bed, FLAGS.batch_size,
-          FLAGS.epoch_size, FLAGS.model_out, FLAGS.gpu_mode)
+          FLAGS.epoch_size, FLAGS.model_out, FLAGS.gpu_mode, FLAGS.max_threads)

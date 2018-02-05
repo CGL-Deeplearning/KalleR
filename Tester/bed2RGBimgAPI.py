@@ -2,8 +2,9 @@ import argparse
 import time
 import os
 from scipy import misc
+import sys
+sys.path.insert(0,'..')
 
-from modules.ImageCreator import ImageCreator
 from modules.ImageCreatorRGB import ImageCreatorRGB
 from modules.BamHandler import BamHandler
 from modules.FastaHandler import FastaHandler
@@ -53,6 +54,7 @@ class Bed2ImageAPI:
         :return:
         """
         for record in self.bed_handler.all_bed_records:
+            print(record)
             self.create_image_rgb(self.bam_handler, self.fasta_handler, record, self.output_dir)
 
 
@@ -122,3 +124,11 @@ if __name__ == '__main__':
     view = Bed2ImageAPI(FLAGS.bam, FLAGS.ref, FLAGS.bed, FLAGS.output_dir)
     view.test()
 
+"""
+python3 bed2RGBimgAPI.py --bam ~/Kishwar/Whole_chr3_data/illumina/vcf_whole_chr/chr3.bam \
+--ref ~/Kishwar/Whole_chr3_data/illumina/vcf_whole_chr/chr3.fa \
+--bed ~/Kishwar/software/KalleR/test_bed_file/sampled_train.bed \
+--output_dir ../output/ \
+--save_img True 
+
+"""

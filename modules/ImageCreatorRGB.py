@@ -147,7 +147,7 @@ class ImageCreatorRGB:
 
         for i in range(start, stop):
             read_base = "*"
-            base_quality = base_qualities[i - pos]
+            base_quality = 0
             # update the base dictionary
             self._update_base_dictionary(i, read_name, read_base, mapping_quality, base_quality, direction, CIGAR_DEL)
 
@@ -320,11 +320,11 @@ class ImageCreatorRGB:
         """
         i = 0
         for read in reads:
-            if i > IMAGE_HEIGHT:
+            if i > IMAGE_HEIGHT-REF_BAND:
                 break
-            self.read_id_in_allele_position.append(read.query_name)
             # check if the mapping quality of the read is above threshold
             if read.mapping_quality > DEFAULT_MIN_MAP_QUALITY:
+                self.read_id_in_allele_position.append(read.query_name)
                 self._process_read(read=read)
                 i += 1
 
@@ -343,46 +343,26 @@ class ImageCreatorRGB:
 
             distance_array[pos] = distance_array[pos-1] + 1
 
-        if self.leftmost_alignment_position - self.rightmost_alignment_position + 1 <= IMAGE_WIDTH:
+        if self.rightmost_alignment_position - self.leftmost_alignment_position + 1 <= IMAGE_WIDTH:
             return self.leftmost_alignment_position, self.rightmost_alignment_position
 
-        left_side = right_side = int(IMAGE_WIDTH-IMAGE_BUFFER / 2)
+        left_side = right_side = int((IMAGE_WIDTH-IMAGE_BUFFER) / 2)
+
         left_val = max(0, distance_array[position] - left_side)
         right_val = min(len(distance_array.keys()), distance_array[position] + right_side)
         left_pos, right_pos = position, position
 
         for pos in sorted(distance_array.keys()):
-            if distance_array[pos] <= left_val:
+            if distance_array[pos] < left_val:
                 left_pos = pos
-            if distance_array[pos] <= right_val:
+            if distance_array[pos] < right_val:
                 right_pos = pos
 
         return left_pos, right_pos
 
-    def test_dictionaries_by_printing_text(self, position):
-        """
-        Print a text version of the pileup. (NOT COMPLETE, INSERTS NOT HANDLED)
-        :param position:
-        :return:
-        """
-        left_pos, right_pos = self.get_start_and_end_positions(position)
-        all_read_ids = self.read_id_in_allele_position
-
-        for read_id in all_read_ids:
-            base_dictionary = self.base_dictionary[read_id] if read_id in self.base_dictionary else []
-            insert_dictionary = self.insert_dictionary[read_id] if read_id in self.insert_dictionary else []
-            start_pos = sorted(base_dictionary)[0]
-            gaps = start_pos - self.leftmost_alignment_position
-            gap_str = " "*gaps
-            print(gap_str, end='')
-            for pos in sorted(base_dictionary):
-                val = base_dictionary[pos]
-                print(val[0], end='')
-            print()
-
     def get_reference_row(self, start_pos, end_pos):
         """
-        Get the reference row in rgb.
+        Get the reference row.
         :param start_pos: Start position of the reference.
         :param end_pos: End position of the reference
         :return:
@@ -390,10 +370,14 @@ class ImageCreatorRGB:
         ref_row = [ImageChannels.get_empty_rgb_channels() for i in range(IMAGE_WIDTH)]
         for i in range(start_pos, end_pos):
             base = self.reference_dictionary[i]
-            ref_row[self.ref_to_index_projection[i]] = ImageChannels.get_ref_channels_rgb(base)
+            if self.ref_to_index_projection[i] < IMAGE_WIDTH:
+                ref_row[self.ref_to_index_projection[i]] = ImageChannels.get_ref_channels_rgb(base)
+
             if i in self.longest_insert_in_position:
                 for j in range(self.longest_insert_in_position[i]):
-                    ref_row[self.ref_to_index_projection[i]+j+1] = ImageChannels.get_ref_channels_rgb('*')
+                    if self.ref_to_index_projection[i] + j + 1 < IMAGE_WIDTH:
+                        ref_row[self.ref_to_index_projection[i]+j+1] = ImageChannels.get_ref_channels_rgb('*')
+
         return ref_row
 
     def _if_read_supports_alt(self, read_id, position, alt):
@@ -441,7 +425,8 @@ class ImageCreatorRGB:
                 attribute_tuple = (base, base_q, map_q, is_rev, is_match, is_supporting)
                 # create channels for the base in that position
                 channels = ImageChannels.get_channels_only_rgb(attribute_tuple, self.reference_dictionary[pos])
-                image_row[self.ref_to_index_projection[pos]] = channels
+                if self.ref_to_index_projection[pos] < IMAGE_WIDTH:
+                    image_row[self.ref_to_index_projection[pos]] = channels
 
             is_match = False
             if read_id in self.insert_dictionary and pos in self.insert_dictionary[read_id]:
@@ -453,23 +438,26 @@ class ImageCreatorRGB:
                 for i, base in enumerate(bases):
                     attribute_tuple = (base, base_qs[i], map_q, is_rev, is_match, is_supporting)
                     channels = ImageChannels.get_channels_only_rgb(attribute_tuple, self.reference_dictionary[pos])
-                    image_row[row_index] = channels
+                    if row_index < IMAGE_WIDTH:
+                        image_row[row_index] = channels
                     row_index += 1
 
                 # if the insert is not the longest insert of that position
                 if len(bases) < self.longest_insert_in_position[pos]:
                     for i in range(self.longest_insert_in_position[pos]-len(bases)):
                         attribute_tuple = ('*', 0, map_q, is_rev, is_match, is_supporting)
-                        channels = ImageChannels.get_channels_only_rgb(attribute_tuple, self.reference_dictionary[pos])
-                        image_row[row_index] = channels
+                        channels = ImageChannels.get_channels_only_rgb(attribute_tuple, '')
+                        if row_index < IMAGE_WIDTH:
+                            image_row[row_index] = channels
                         row_index += 1
             # if there is an insert at this position but not in the read
             elif pos in self.longest_insert_in_position:
                 row_index = self.ref_to_index_projection[pos] + 1
                 for i in range(self.longest_insert_in_position[pos]):
                     attribute_tuple = ('*', 0, self.read_mq_dict[read_id], self.read_rev_dict[read_id], False, is_supporting)
-                    channels = ImageChannels.get_channels_only_rgb(attribute_tuple, self.reference_dictionary[pos])
-                    image_row[row_index] = channels
+                    channels = ImageChannels.get_channels_only_rgb(attribute_tuple, '')
+                    if row_index < IMAGE_WIDTH:
+                        image_row[row_index] = channels
                     row_index += 1
 
         return image_row
@@ -487,6 +475,9 @@ class ImageCreatorRGB:
         image_rows = list()
         for read_id in all_read_ids:
             image_rows.append(self.get_read_row(read_id, left_pos, right_pos, alts, position))
+            if len(image_rows) == IMAGE_HEIGHT - REF_BAND:
+                break
+
         return image_rows
 
     def project_ref_positions(self, left_pos, right_pos):
@@ -528,10 +519,15 @@ class ImageCreatorRGB:
         self._update_ref_sequence(left_pos, right_pos)
         self.project_ref_positions(left_pos, right_pos)
         img_data = list()
-
         for i in range(REF_BAND):
             img_data.append(self.get_reference_row(left_pos, right_pos))
 
         img_data = img_data + self.generate_read_pileups(left_pos, right_pos, position, [alts])
+
+        while len(img_data) < IMAGE_HEIGHT:
+            image_row = [ImageChannels.get_empty_rgb_channels() for i in range(IMAGE_WIDTH)]
+            img_data.append(image_row)
+
         image_array = np.array(img_data).astype(np.uint8)
+
         return image_array

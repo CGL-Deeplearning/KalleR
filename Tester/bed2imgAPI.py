@@ -1,4 +1,6 @@
 import argparse
+import sys
+sys.path.insert(0, '..')
 
 from modules.ImageCreator import ImageCreator
 from modules.BamHandler import BamHandler
