@@ -320,7 +320,7 @@ class ImageCreator:
         """
         i = 0
         for read in reads:
-            if i > IMAGE_HEIGHT:
+            if i > IMAGE_HEIGHT-REF_BAND:
                 break
             # check if the mapping quality of the read is above threshold
             if read.mapping_quality > DEFAULT_MIN_MAP_QUALITY:
@@ -353,33 +353,12 @@ class ImageCreator:
         left_pos, right_pos = position, position
 
         for pos in sorted(distance_array.keys()):
-            if distance_array[pos] <= left_val:
+            if distance_array[pos] < left_val:
                 left_pos = pos
-            if distance_array[pos] <= right_val:
+            if distance_array[pos] < right_val:
                 right_pos = pos
 
         return left_pos, right_pos
-
-    def test_dictionaries_by_printing_text(self, position):
-        """
-        Print a text version of the pileup. (NOT COMPLETE, INSERTS NOT HANDLED)
-        :param position:
-        :return:
-        """
-        left_pos, right_pos = self.get_start_and_end_positions(position)
-        all_read_ids = self.read_id_in_allele_position
-
-        for read_id in all_read_ids:
-            base_dictionary = self.base_dictionary[read_id] if read_id in self.base_dictionary else []
-            insert_dictionary = self.insert_dictionary[read_id] if read_id in self.insert_dictionary else []
-            start_pos = sorted(base_dictionary)[0]
-            gaps = start_pos - self.leftmost_alignment_position
-            gap_str = " "*gaps
-            print(gap_str, end='')
-            for pos in sorted(base_dictionary):
-                val = base_dictionary[pos]
-                print(val[0], end='')
-            print()
 
     def get_reference_row(self, start_pos, end_pos):
         """
@@ -391,13 +370,14 @@ class ImageCreator:
         ref_row = [ImageChannels.get_empty_channels() for i in range(IMAGE_WIDTH)]
         for i in range(start_pos, end_pos):
             base = self.reference_dictionary[i]
-            ref_row[self.ref_to_index_projection[i]] = ImageChannels.get_ref_channels(base)
+            if self.ref_to_index_projection[i] < IMAGE_WIDTH:
+                ref_row[self.ref_to_index_projection[i]] = ImageChannels.get_ref_channels(base)
+
             if i in self.longest_insert_in_position:
                 for j in range(self.longest_insert_in_position[i]):
-                    ref_row[self.ref_to_index_projection[i]+j+1] = ImageChannels.get_ref_channels('*')
+                    if self.ref_to_index_projection[i] + j + 1 < IMAGE_WIDTH:
+                        ref_row[self.ref_to_index_projection[i]+j+1] = ImageChannels.get_ref_channels('*')
 
-        if len(ref_row) > IMAGE_WIDTH:
-            ref_row = ref_row[:IMAGE_WIDTH]
         return ref_row
 
     def _if_read_supports_alt(self, read_id, position, alt):
@@ -445,7 +425,8 @@ class ImageCreator:
                 attribute_tuple = (base, base_q, map_q, is_rev, is_match, is_supporting)
                 # create channels for the base in that position
                 channels = ImageChannels.get_channels(attribute_tuple)
-                image_row[self.ref_to_index_projection[pos]] = channels
+                if self.ref_to_index_projection[pos] < IMAGE_WIDTH:
+                    image_row[self.ref_to_index_projection[pos]] = channels
 
             is_match = False
             if read_id in self.insert_dictionary and pos in self.insert_dictionary[read_id]:
@@ -457,7 +438,8 @@ class ImageCreator:
                 for i, base in enumerate(bases):
                     attribute_tuple = (base, base_qs[i], map_q, is_rev, is_match, is_supporting)
                     channels = ImageChannels.get_channels(attribute_tuple)
-                    image_row[row_index] = channels
+                    if row_index < IMAGE_WIDTH:
+                        image_row[row_index] = channels
                     row_index += 1
 
                 # if the insert is not the longest insert of that position
@@ -465,7 +447,8 @@ class ImageCreator:
                     for i in range(self.longest_insert_in_position[pos]-len(bases)):
                         attribute_tuple = ('*', 0, map_q, is_rev, is_match, is_supporting)
                         channels = ImageChannels.get_channels(attribute_tuple)
-                        image_row[row_index] = channels
+                        if row_index < IMAGE_WIDTH:
+                            image_row[row_index] = channels
                         row_index += 1
             # if there is an insert at this position but not in the read
             elif pos in self.longest_insert_in_position:
@@ -473,11 +456,10 @@ class ImageCreator:
                 for i in range(self.longest_insert_in_position[pos]):
                     attribute_tuple = ('*', 0, self.read_mq_dict[read_id], self.read_rev_dict[read_id], False, is_supporting)
                     channels = ImageChannels.get_channels(attribute_tuple)
-                    image_row[row_index] = channels
+                    if row_index < IMAGE_WIDTH:
+                        image_row[row_index] = channels
                     row_index += 1
 
-        if len(image_row) > IMAGE_WIDTH:
-            image_row = image_row[:IMAGE_WIDTH]
         return image_row
 
     def generate_read_pileups(self, left_pos, right_pos, position, alts):

@@ -19,9 +19,10 @@ class Bed2ImageAPI:
     @staticmethod
     def create_image(bam_handler, fasta_handler, bed_record):
         """
-        Iterate through all the reads that fall in a region, find candidates, label candidates and output a bed file.
-        :param start_position: Start position of the region
-        :param end_position: End position of the region
+        Create image array from a bed record
+        :param bam_handler: Bam file interface
+        :param fasta_handler: Fasta file interface
+        :param bed_record: A bed record
         :return:
         """
         chromosome_name, start_position, end_position, ref, alts, genotype = tuple(bed_record.rstrip().split('\t'))
@@ -42,8 +43,8 @@ class Bed2ImageAPI:
         Test the API
         :return:
         """
-        for i, record in enumerate(self.bed_handler.all_bed_records):
-            print(i, record)
+        for record in self.bed_handler.all_bed_records:
+            print(record)
             self.create_image(self.bam_handler, self.fasta_handler, record)
 
 

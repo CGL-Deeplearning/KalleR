@@ -24,6 +24,11 @@ class BedHandler:
         self.bed_dictionary = {}
         self.alt_dictionary = {}
 
+        # genotype counts
+        self.total_hom = 0
+        self.total_het = 0
+        self.total_hom_alt = 0
+
         # convert the bed file to a dictionary
         self.convert_bed_to_dictionary()
 
@@ -46,6 +51,14 @@ class BedHandler:
             if pos not in self.alt_dictionary.keys():
                 self.alt_dictionary[pos] = list()
 
+    def _update_genotype_count(self, genotype):
+        if genotype == 0:
+            self.total_hom += 1
+        elif genotype == 1:
+            self.total_het += 1
+        elif genotype == 2:
+            self.total_hom_alt += 1
+
     def add_record_to_dictionary(self, record):
         """
         Add a record to the dictionary.
@@ -53,6 +66,9 @@ class BedHandler:
         :return:
         """
         chr, pos_start, pos_end, ref, alt, genotype = record
+
+        self._update_genotype_count(int(genotype))
+
         pos_start = int(pos_start)
         pos_end = int(pos_end) + 1
         genotype = int(genotype)
@@ -78,4 +94,6 @@ class BedHandler:
             self.all_bed_records = f.readlines()
 
         for record in self.all_bed_records:
+            if record.rstrip() is None:
+                continue
             self.add_record_to_dictionary(tuple(record.rstrip().split('\t')))
