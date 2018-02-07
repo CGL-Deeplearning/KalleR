@@ -105,7 +105,7 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
 
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.0001)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, weight_decay=0.0001)
     start_epoch = 0
 
     if gpu_mode:
