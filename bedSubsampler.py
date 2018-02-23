@@ -47,7 +47,7 @@ class BedSubsampler:
         """
         # calculate the downsample rate based on distribution of three classes
         downsample_rate = max(self.bed_handler.total_het, self.bed_handler.total_hom_alt) / self.bed_handler.total_hom
-        downsample_rate = downsample_rate
+        downsample_rate = 2 * downsample_rate
 
         for i, record in enumerate(self.bed_handler.all_bed_records):
             if BedSubsampler.select_or_not(record, downsample_rate) is True:
