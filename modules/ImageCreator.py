@@ -1,533 +1,567 @@
-from collections import defaultdict
-from modules.ImageChannels import ImageChannels
 import numpy as np
+from PIL import Image
 from scipy import misc
 
 """
-This script creates an image from a given bed record. 
+This script creates pileup images given a vcf record, bam alignment file and reference fasta file.
+
+imageChannels: Handles how many channels to create for each base and their structure
+
 """
 
-DEFAULT_MIN_MAP_QUALITY = 5
-IMAGE_HEIGHT = 300
-IMAGE_WIDTH = 300
-IMAGE_BUFFER = 0
-CIGAR_MATCH = 0
-CIGAR_IN = 1
-CIGAR_DEL = 2
 MAX_COLOR_VALUE = 254.0
 BASE_QUALITY_CAP = 40.0
 MAP_QUALITY_CAP = 60.0
 MAP_QUALITY_FILTER = 10.0
-REF_BAND = 5
+MATCH_CIGAR_CODE = 0
+INSERT_CIGAR_CODE = 1
+DELETE_CIGAR_CODE = 2
+
+class imageChannels:
+    """
+    Handles how many channels to create for each base and their way of construction.
+    """
+
+    def __init__(self, pileup_attributes, ref_base, is_supporting):
+        """
+        Initialize a base with it's attributes
+        :param pileup_attributes: Attributes of a pileup base
+        :param ref_base: Reference base corresponding to that pileup base
+        """
+        self.pileup_base = pileup_attributes[0]
+        self.base_qual = pileup_attributes[1]
+        self.map_qual = pileup_attributes[2]
+        self.cigar_code = pileup_attributes[3]
+        self.is_rev = pileup_attributes[4]
+        self.ref_base = ref_base
+        self.is_match = True if self.ref_base == self.pileup_base else False
+        self.is_supporting = is_supporting
+
+    @staticmethod
+    def get_base_color(base):
+        """
+        Get color based on a base.
+        - Uses different band of the same channel.
+        :param base:
+        :return:
+        """
+        if base == 'A':
+            return 254.0
+        if base == 'C':
+            return 100.0
+        if base == 'G':
+            return 180.0
+        if base == 'T':
+            return 30.0
+        if base == '*' or 'N':
+            return 5.0
+
+    @staticmethod
+    def get_base_quality_color(base_quality):
+        """
+        Get a color spectrum given base quality
+        :param base_quality: value of base quality
+        :return:
+        """
+        c_q = min(base_quality, BASE_QUALITY_CAP)
+        color = MAX_COLOR_VALUE * c_q / BASE_QUALITY_CAP
+        return color
+
+    @staticmethod
+    def get_map_quality_color(map_quality):
+        """
+        Get a color spectrum given mapping quality
+        :param map_quality: value of mapping quality
+        :return:
+        """
+        c_q = min(map_quality, MAP_QUALITY_CAP)
+        color = MAX_COLOR_VALUE * c_q / MAP_QUALITY_CAP
+        return color
+
+    @staticmethod
+    def get_strand_color(is_rev):
+        """
+        Get color for forward and reverse reads
+        :param is_rev: True if read is reversed
+        :return:
+        """
+        if is_rev is True:
+            return 240
+        else:
+            return 70
+
+    @staticmethod
+    def get_match_ref_color(is_match):
+        """
+        Get color for base matching to reference
+        :param is_match: If true, base matches to reference
+        :return:
+        """
+        if is_match is True:
+            return MAX_COLOR_VALUE * 0.2
+        else:
+            return MAX_COLOR_VALUE * 1.0
+
+    @staticmethod
+    def get_alt_support_color(is_in_support):
+        """
+        Get support color
+        :param is_in_support: Boolean value of support
+        :return:
+        """
+        if is_in_support is True:
+            return MAX_COLOR_VALUE * 1.0
+        else:
+            return MAX_COLOR_VALUE * 0.6
+
+    @staticmethod
+    def get_cigar_color(cigar_code):
+        """
+        ***NOT USED YET***
+        :param is_in_support:
+        :return:
+        """
+        if cigar_code == 0:
+            return MAX_COLOR_VALUE
+        if cigar_code == 1:
+            return MAX_COLOR_VALUE * 0.6
+        if cigar_code == 2:
+            return MAX_COLOR_VALUE * 0.3
+
+    @staticmethod
+    def get_empty_channels():
+        """
+        Get empty channel values
+        :return:
+        """
+        return [0, 0, 0, 0, 0, 0, 0]
+
+    def get_channels(self):
+        """
+        Get a bases's channel construction
+        :return: [color spectrum of channels based on base attributes]
+        """
+        base_color = self.get_base_color(self.pileup_base)
+        base_quality_color = imageChannels.get_base_quality_color(self.base_qual)
+        map_quality_color = imageChannels.get_map_quality_color(self.map_qual)
+        strand_color = imageChannels.get_strand_color(self.is_rev)
+        match_color = imageChannels.get_match_ref_color(self.is_match)
+        support_color = imageChannels.get_alt_support_color(self.is_supporting)
+        cigar_color = imageChannels.get_cigar_color(self.cigar_code)
+        return [base_color, base_quality_color, map_quality_color, strand_color, match_color, support_color, cigar_color]
+
+    @staticmethod
+    def get_channels_for_ref(base):
+        """
+        Get a reference bases's channel construction
+        :param base: Reference base
+        :return: [color spectrum of channels based on some default values]
+        """
+        base_color = imageChannels.get_base_color(base)
+        base_quality_color = imageChannels.get_base_quality_color(60)
+        map_quality_color = imageChannels.get_map_quality_color(60)
+        strand_color = imageChannels.get_strand_color(is_rev=False)
+        match_color = imageChannels.get_match_ref_color(is_match=True)
+        support_color = imageChannels.get_alt_support_color(is_in_support=True)
+        cigar_color = imageChannels.get_cigar_color(MATCH_CIGAR_CODE)
+        return [base_color, base_quality_color, map_quality_color, strand_color, match_color, support_color, cigar_color]
+
+    # RGB image creator
+    # ---ONLY USED FOR TESTING--- #
+    @staticmethod
+    def get_empty_rgb_channels():
+        return [0, 0, 0, 255]
+
+    @staticmethod
+    def get_color_for_base_rgb(ref, base):
+        if ref == base and ref != '*':
+            return 255, 255, 255
+        elif base == 'A':
+            return 255, 0, 0
+        elif base == 'C':
+            return 255, 255, 0
+        elif base == 'T':
+            return 0, 0, 255
+        elif base == 'G':
+            return 0, 255, 0
+        else:
+            return 255, 0, 255
+
+    def get_channels_only_rgb(self):
+        base_color = self.get_base_color(self.pileup_base)
+        base_quality_color = imageChannels.get_base_quality_color(self.base_qual)
+        map_quality_color = imageChannels.get_map_quality_color(self.map_qual)
+        strand_color = imageChannels.get_strand_color(self.is_rev)
+        match_color = imageChannels.get_match_ref_color(self.is_match)
+        support_color = imageChannels.get_alt_support_color(self.is_supporting)
+        r, g, b = self.get_color_for_base_rgb(self.ref_base, self.pileup_base)
+
+        return [r, g, b, support_color]
+
+    @staticmethod
+    def get_channels_for_ref_only_rgb(base):
+        base_color = imageChannels.get_base_color(base)
+        base_quality_color = imageChannels.get_base_quality_color(60)
+        map_quality_color = imageChannels.get_map_quality_color(60)
+        strand_color = imageChannels.get_strand_color(is_rev=False)
+        get_match_color = imageChannels.get_match_ref_color(is_match=True)
+        r, g, b = imageChannels.get_color_for_base_rgb('', base)
+        support_color = imageChannels.get_alt_support_color(is_in_support=True)
+
+        return [r, g, b, support_color]
 
 
 class ImageCreator:
     """
-    Create image given a bed record.
+    Processes a pileup around a positoin
     """
-    def __init__(self, fasta_handler, chromosome_name, allele_start_position, allele_end_position):
+    def __init__(self, ref_object, pileupcolumns, contig, pos, genotype, alt):
         """
-        Initialize image creator object
-        :param fasta_handler: Reference file handler
-        :param chromosome_name: Chromosome name
-        :param allele_start_position: Start position of the allele in question
-        :param allele_end_position: End position of the allele in question
+        Initialize PileupProcessor object with required dictionaries
+        :param ref_object: pysam FastaFile object that contains the reference
+        :param pileupcolumns: pysam AlignmentFIle.pileup object that contains reads of a position
+        :param contig: Contig (ex chr3)
+        :param pos: Position in contig
+        :param genotype: Genotype
+        :param alt: Alternate allele
         """
-        self.chromosome_name = chromosome_name
-        self.fasta_handler = fasta_handler
+        self.ref_object = ref_object
+        self.pileupcolumns = pileupcolumns
+        self.contig = contig
+        self.pos = pos
+        self.genotype = genotype
+        self.alt = alt
+        # [genomic_position] = [max_insert_length]
+        self.insert_length_dictionary = {} # used
+        # [read_id] = {{genomic_position}->base}
+        self.read_dictionary = {} # used
+        # [read_id] = {{genomic_position}->insert_bases}
+        self.read_insert_dictionary = {} #used
+        # List of Read ids in a genomic position
+        self.reads_aligned_to_pos = {}
+        # genomic_position_1, genomic_position_2...
+        self.position_list = [] # used
+        self.leftmost_genomic_position = -1
+        self.rightmost_genomic_position = -1
+        self.genomic_position_projection = {}
+        self.reference_base_projection = {}
+        self.ref_sequence = ''
+        self.process_pileup()
+        self.project_genomic_positions()
 
-        # the base and the insert dictionary for finding alleles
-        self.base_dictionary = {}
-        self.insert_dictionary = {}
-        self.reference_dictionary = {}
+    def project_genomic_positions(self):
+        """
+        Generate reference sequence with inserts based on two dictionaries
+        :return:
+        """
+        if self.leftmost_genomic_position < 0:
+            self.leftmost_genomic_position = 0
+        if self.rightmost_genomic_position < 0:
+            self.rightmost_genomic_position = 0
 
-        # supplementary dictionaries and other values
-        self.read_id_in_allele_position = list()
-        self.longest_insert_in_position = {}
-        self.leftmost_alignment_position = allele_start_position
-        self.rightmost_alignment_position = allele_end_position
-        self.read_rev_dict = {}
-        self.read_mq_dict = {}
-        # ref position to index projection to handle inserts
-        self.ref_to_index_projection = {}
+        # get the reference sequence
+        ref_seq, error_val = self.ref_object.get_ref_of_region(self.contig,
+                                                    ":"+str(self.leftmost_genomic_position+1)+ "-"
+                                                    + str(self.rightmost_genomic_position+1))
+        if error_val == 1:
+            print("ERROR IN FETCHING REFERENCE: ", self.contig, self.pos, self.alt, self.genotype)
+
+        ref_seq_with_insert = ''
+        idx = 0
+        for i in range(self.leftmost_genomic_position, self.rightmost_genomic_position+1):
+            # projection of genomic position
+            self.genomic_position_projection[i] = idx
+            # get reference of that position
+            self.reference_base_projection[i] = ref_seq[i-self.leftmost_genomic_position]
+            ref_seq_with_insert += ref_seq[i-self.leftmost_genomic_position]
+            idx += 1
+            # if genomic position has insert
+            if i in self.insert_length_dictionary:
+                # append inserted characters to the reference
+                ref_seq_with_insert += (self.insert_length_dictionary[i] * '*')
+                idx += self.insert_length_dictionary[i]
+        # set the reference sequence
+        self.ref_sequence = ref_seq_with_insert
+
+        # return index
+        return idx
+
+    def length_of_region(self):
+        """
+        Return the length of the sequence from left to rightmost genomic position.
+        :return:
+        """
+        length = 0
+        for i in range(self.leftmost_genomic_position, self.rightmost_genomic_position):
+            length += 1
+            if i in self.insert_length_dictionary:
+                length += self.insert_length_dictionary[i]
+        return length
+
+    def initialize_dictionaries(self, genomic_position, read_id, is_insert):
+        """
+        Initialize all the dictionaries for a specific position
+        :param genomic_position: Genomic position of interest
+        :param read_id: Read id for which dictionaries should be initialized
+        :param is_insert: If the position is an insert
+        :return:
+        """
+        if self.leftmost_genomic_position < 0 or genomic_position < self.leftmost_genomic_position:
+            self.leftmost_genomic_position = genomic_position
+        if self.rightmost_genomic_position < 0 or genomic_position > self.rightmost_genomic_position:
+            self.rightmost_genomic_position = genomic_position
+
+        if genomic_position not in self.reads_aligned_to_pos:
+            self.reads_aligned_to_pos[genomic_position] = []
+
+        if read_id not in self.read_dictionary:
+            self.read_dictionary[read_id] = {}
+            self.read_dictionary[read_id][genomic_position] =''
+
+        if is_insert:
+            if genomic_position not in self.insert_length_dictionary:
+                self.insert_length_dictionary[genomic_position] = 0
+            if read_id not in self.read_insert_dictionary:
+                self.read_insert_dictionary[read_id] = {}
+                self.read_insert_dictionary[read_id][genomic_position] =''
+
+    def save_info_of_a_position(self, genomic_position, read_id, base, base_qual, map_qual, is_rev, cigar_code, is_in):
+        """
+        Given the attributes of a base at a position
+        :param genomic_position: Genomic position
+        :param read_id: Read id of a read
+        :param base: Base at the position
+        :param base_qual: Base quality
+        :param map_qual: Map quality
+        :param is_rev: If read is reversed
+        :param is_in:
+        :return:
+        """
+        self.initialize_dictionaries(genomic_position, read_id, is_in)
+
+        if is_in is False:
+            self.read_dictionary[read_id][genomic_position] = (base, base_qual, map_qual, cigar_code, is_rev)
+        else:
+            self.read_insert_dictionary[read_id][genomic_position] = (base, base_qual, map_qual, cigar_code, is_rev)
+            self.insert_length_dictionary[genomic_position] = max(self.insert_length_dictionary[genomic_position],
+                                                                  len(base))
 
     @staticmethod
-    def get_read_stop_position(read):
-        """
-        Returns the stop position of the reference to where the read stops aligning
-        :param read: The read
-        :return: stop position of the reference where the read last aligned
-        """
-        ref_alignment_stop = read.reference_end
+    def get_attributes_to_save_indel( pileupcolumn, pileupread):
+        insert_start = pileupread.query_position + 1
+        insert_end = insert_start + pileupread.indel
 
-        # only find the position if the reference end is fetched as none from pysam API
-        if ref_alignment_stop is None:
-            positions = read.get_reference_positions()
+        return pileupcolumn.pos, \
+               pileupread.alignment.query_name, \
+               pileupread.alignment.query_sequence[insert_start:insert_end], \
+               pileupread.alignment.query_qualities[insert_start:insert_end], \
+               pileupread.alignment.mapping_quality, \
+               pileupread.alignment.is_reverse, \
+               INSERT_CIGAR_CODE # CIGAR OPERATION IS INSERT
 
-            # find last entry that isn't None
-            i = len(positions) - 1
-            ref_alignment_stop = positions[-1]
-            while i > 0 and ref_alignment_stop is None:
-                i -= 1
-                ref_alignment_stop = positions[i]
-
-        return ref_alignment_stop
-
-    def _update_base_dictionary(self, pos, read_id, base, map_quality, base_qualities, direction, cigar_op):
-        """
-        In base dictionary add attributes to create the image.
-        :param pos: Genomic position
-        :param read_id: Read id
-        :param base: Nucleotide base
-        :param map_quality: Mapping quality
-        :param base_qualities: Base quality
-        :param direction: True if the read  is reverse
-        :param cigar_op: CIGAR operation
-        :return:
-        """
-        if read_id not in self.base_dictionary:
-            self.base_dictionary[read_id] = {}
-        if pos not in self.base_dictionary[read_id]:
-            self.base_dictionary[read_id][pos] = []
-
-        self.base_dictionary[read_id][pos] = (base, map_quality, base_qualities, direction, cigar_op)
-
-    def _update_insert_dictionary(self, pos, read_id, base, map_quality, base_qualities, direction, cigar_op):
-        """
-        In insert dictionary add attributes to create the image.
-        :param pos: Genomic position
-        :param read_id: Read id
-        :param base: Nucleotide base
-        :param map_quality: Mapping quality
-        :param base_qualities: Array containing base qualities
-        :param direction: True if the read  is reverse
-        :param cigar_op: CIGAR operation
-        :return:
-        """
-        if read_id not in self.insert_dictionary:
-            self.insert_dictionary[read_id] = {}
-        if pos not in self.insert_dictionary[read_id]:
-            self.insert_dictionary[read_id][pos] = []
-        self.insert_dictionary[read_id][pos] = (base, map_quality, base_qualities, direction, cigar_op)
-
-    def _process_match(self, pos, length, read_sequence, read_name, mapping_quality, base_qualities, direction):
-        """
-        Process a cigar match operation in a read
-        :param pos: Starting position of the cigar operation
-        :param length: Length of the operation
-        :param read_sequence: Read sequence where this operation happens
-        :param read_name: Read name
-        :param mapping_quality: Mapping quality
-        :param base_qualities: Array containing base qualities
-        :param direction: True if the read  is reverse
-        :return:
-        """
-        start = pos
-        stop = start + length
-        for i in range(start, stop):
-            read_base = read_sequence[i-pos]
-            base_quality = base_qualities[i-pos]
-            self._update_base_dictionary(i, read_name, read_base, mapping_quality, base_quality, direction, CIGAR_MATCH)
-
-    def _process_delete(self, pos, length, read_name, mapping_quality, base_qualities, direction):
-        """
-        Process a cigar delete operation in a read
-        :param pos: Starting position of the cigar operation
-        :param length: Length of the operation
-        :param read_name: Read name
-        :param mapping_quality: Mapping quality
-        :param base_qualities: Array containing base qualities
-        :param direction: True if the read  is reverse
-        :return:
-        """
-
-        # actual delete position starts one after the anchor
-        start = pos
-        stop = start + length
-
-        for i in range(start, stop):
-            read_base = "*"
-            base_quality = 0
-            # update the base dictionary
-            self._update_base_dictionary(i, read_name, read_base, mapping_quality, base_quality, direction, CIGAR_DEL)
-
-    def _process_insert(self, pos, read_sequence, read_name, mapping_quality, base_qualities, direction):
-        """
-        Process a cigar delete operation in a read
-        :param pos: Starting position of the cigar operation
-        :param read_name: Read name
-        :param mapping_quality: Mapping quality
-        :param base_qualities: Array containing base qualities
-        :param direction: True if the read  is reverse
-        :return:
-        """
-        read_bases = read_sequence
-        self._update_insert_dictionary(pos, read_name, read_bases, mapping_quality, base_qualities, direction, CIGAR_IN)
-
-        if pos not in self.longest_insert_in_position:
-            self.longest_insert_in_position[pos] = 0
-
-        self.longest_insert_in_position[pos] = max(self.longest_insert_in_position[pos], len(read_bases))
-
-    def _update_reference_dictionary(self, position, ref_base):
-        """
-        Update the reference dictionary
-        :param position: Genomic position
-        :param ref_base: Reference base at that position
-        :return:
-        """
-        self.reference_dictionary[position] = ref_base
-
-    def parse_cigar_tuple(self, cigar_code, length, alignment_position, read_sequence,
-                          read_name, base_qualities, mapping_quality, direction):
-        """
-        Parse through a cigar operation to find possible candidate variant positions in the read
-        :param cigar_code: Cigar operation code
-        :param length: Length of the operation
-        :param alignment_position: Alignment position corresponding to the reference
-        :param read_sequence: Read sequence
-        :param read_name: Read ID
-        :param base_qualities: Array containing base quality of the read
-        :param mapping_quality: Mapping quality of the read
-        :param direction: If true then the read is reversed
-        :return:
-
-        cigar key map based on operation.
-        details: http://pysam.readthedocs.io/en/latest/api.html#pysam.AlignedSegment.cigartuples
-        0: "MATCH",
-        1: "INSERT",
-        2: "DELETE",
-        3: "REFSKIP",
-        4: "SOFTCLIP",
-        5: "HARDCLIP",
-        6: "PAD"
-        """
-        # get what kind of code happened
-        ref_index_increment = length
-        read_index_increment = length
-
-        # deal different kinds of operations
-        if cigar_code == 0:
-            # match
-            self._process_match(pos=alignment_position,
-                                length=length,
-                                read_sequence=read_sequence,
-                                read_name=read_name,
-                                mapping_quality=mapping_quality,
-                                base_qualities=base_qualities,
-                                direction=direction
-                                )
-        elif cigar_code == 1:
-            # insert
-            # alignment position is where the next alignment starts, for insert and delete this
-            # position should be the anchor point hence we use a -1 to refer to the anchor point
-            self._process_insert(pos=alignment_position - 1,
-                                 read_sequence=read_sequence,
-                                 read_name=read_name,
-                                 mapping_quality=mapping_quality,
-                                 base_qualities=base_qualities,
-                                 direction=direction
-                                 )
-            ref_index_increment = 0
-        elif cigar_code == 2 or cigar_code == 3:
-            # delete or ref_skip
-            self._process_delete(pos=alignment_position,
-                                 length=length,
-                                 read_name=read_name,
-                                 mapping_quality=mapping_quality,
-                                 base_qualities=base_qualities,
-                                 direction=direction
-                                 )
-            read_index_increment = 0
-        elif cigar_code == 4:
-            # soft clip
-            ref_index_increment = 0
-            # print("CIGAR CODE ERROR SC")
-        elif cigar_code == 5:
-            # hard clip
-            ref_index_increment = 0
-            read_index_increment = 0
-            # print("CIGAR CODE ERROR HC")
-        elif cigar_code == 6:
-            # pad
-            ref_index_increment = 0
-            read_index_increment = 0
-            # print("CIGAR CODE ERROR PAD")
+    @staticmethod
+    def get_attributes_to_save(pileupcolumn, pileupread):
+        if pileupread.is_del:
+            return pileupcolumn.pos, \
+                   pileupread.alignment.query_name,\
+                   '*', \
+                   0,\
+                   pileupread.alignment.mapping_quality, \
+                   pileupread.alignment.is_reverse, \
+                   DELETE_CIGAR_CODE # CIGAR OPERATION DELETE
         else:
-            raise("INVALID CIGAR CODE: %s" % cigar_code)
+            return pileupcolumn.pos, \
+                   pileupread.alignment.query_name, \
+                   pileupread.alignment.query_sequence[pileupread.query_position],  \
+                   pileupread.alignment.query_qualities[pileupread.query_position], \
+                   pileupread.alignment.mapping_quality, \
+                   pileupread.alignment.is_reverse, \
+                   MATCH_CIGAR_CODE  # CIGAR OPERATION MATCH
 
-        return ref_index_increment, read_index_increment
+    @staticmethod
+    def save_image_as_png(pileup_array, save_dir, file_name):
+        pileupArray2d = pileup_array.reshape((pileup_array.shape[0], -1))
+        misc.imsave(save_dir + file_name + ".png", pileupArray2d, format="PNG")
 
-    def _update_image_bounderies(self, read_start, read_end):
-        """
-        Update the leftmost and rightmost alignment positions.
-        :param read_start: Read alignment start
-        :param read_end: Read alignment end
-        :return:
-        """
-        self.leftmost_alignment_position = min(self.leftmost_alignment_position, read_start)
-        self.rightmost_alignment_position = max(self.rightmost_alignment_position, read_end)
+    def process_pileup(self):
+        for pileupcolumn in self.pileupcolumns:
+            self.position_list.append(pileupcolumn.pos)
+            self.reads_aligned_to_pos[pileupcolumn.pos] = []
+            for pileupread in pileupcolumn.pileups:
+                self.reads_aligned_to_pos[pileupcolumn.pos].append(pileupread.alignment.query_name)
 
-    def _process_read(self, read):
-        """
-        Process a read that aligns to the allele position
-        :param read:
-        :return:
-        """
-        ref_alignment_start = read.reference_start
-        ref_alignment_stop = self.get_read_stop_position(read)
-        self._update_image_bounderies(ref_alignment_start, ref_alignment_stop)
+                if pileupread.indel > 0:
+                    gen_pos, read_id, base, base_qual, map_qual, is_rev, cigar_code = \
+                        self.get_attributes_to_save_indel(pileupcolumn, pileupread)
+                    self.save_info_of_a_position(gen_pos, read_id, base, base_qual, map_qual, is_rev, cigar_code, is_in=True)
 
-        cigar_tuples = read.cigartuples
-        read_sequence = read.query_sequence
+                gen_pos, read_id, base, base_qual, map_qual, is_rev, cigar_code = \
+                    self.get_attributes_to_save(pileupcolumn, pileupread)
+                self.save_info_of_a_position(gen_pos, read_id, base, base_qual, map_qual, is_rev, cigar_code, is_in=False)
 
-        base_qualities = read.query_qualities
-        mapping_quality = read.mapping_quality
-        direction = read.is_reverse
-        self.read_mq_dict[read.query_name] = mapping_quality
-        self.read_rev_dict[read.query_name] = direction
+    def create_text_pileup(self, query_pos):
+        left_most_pos = -1
+        for read_id in self.reads_aligned_to_pos[query_pos]:
+            read_list = []
+            aligned_positions = sorted(self.read_dictionary[read_id].keys())
+            if left_most_pos < 0:
+                left_most_pos = aligned_positions[0]
+            left_most_pos = min(left_most_pos, aligned_positions[0])
+            inserts_in_between = sum(self.insert_length_dictionary[val] if val in self.insert_length_dictionary.keys() else 0 for val in range(left_most_pos, aligned_positions[0]))
+            padding = aligned_positions[0] - left_most_pos + inserts_in_between
+            for pad in range(padding):
+                read_list.append(' ')
+            for pos in aligned_positions:
+                read_list.append((self.read_dictionary[read_id][pos][0]))
+                if pos in self.insert_length_dictionary.keys() and self.insert_length_dictionary[pos] > 0:
+                    this_has_insert = read_id in self.read_insert_dictionary and pos in self.read_insert_dictionary[read_id]
+                    inserted_bases = 0
+                    if this_has_insert is True:
+                        for base in self.read_insert_dictionary[read_id][pos][0]:
+                            read_list.append(base)
+                            inserted_bases += 1
+                    for i in range(inserted_bases, self.insert_length_dictionary[pos]):
+                        read_list.append('*')
 
-        read_index = 0
-        ref_index = 0
+            print(''.join(read_list))
 
-        for cigar in cigar_tuples:
-            cigar_code = cigar[0]
-            length = cigar[1]
-            # get the sequence segments that are effected by this operation
-            read_sequence_segment = read_sequence[read_index:read_index+length]
-            base_quality_segment = base_qualities[read_index:read_index+length]
-
-            # send the cigar tuple to get attributes we got by this operation
-            ref_index_increment, read_index_increment = \
-                self.parse_cigar_tuple(cigar_code=cigar_code,
-                                       length=length,
-                                       alignment_position=ref_alignment_start+ref_index,
-                                       read_sequence=read_sequence_segment,
-                                       read_name=read.query_name,
-                                       base_qualities=base_quality_segment,
-                                       mapping_quality=mapping_quality,
-                                       direction=direction)
-
-            # increase the read index iterator
-            read_index += read_index_increment
-            ref_index += ref_index_increment
-
-    def process_reads(self, reads):
-        """
-        Parse reads to aligned to a site to find variants
-        :param reads: Set of reads aligned
-        :return:
-        """
-        i = 0
-        for read in reads:
-            if i > IMAGE_HEIGHT-REF_BAND:
-                break
-            # check if the mapping quality of the read is above threshold
-            if read.mapping_quality > DEFAULT_MIN_MAP_QUALITY:
-                self.read_id_in_allele_position.append(read.query_name)
-                self._process_read(read=read)
-                i += 1
-
-    def get_start_and_end_positions(self, position):
-        """
-        If leftmost and rightmost positions are out of window then find the left and right boundaries.
-        :param position: Position where the allele resides
-        :return:
-        """
-        distance_array = defaultdict(int)
-        distance_array[self.leftmost_alignment_position] = 0
-
-        for pos in range(self.leftmost_alignment_position, self.rightmost_alignment_position):
-            if pos in self.longest_insert_in_position.keys():
-                distance_array[pos + 1] += self.longest_insert_in_position[pos]
-
-            distance_array[pos] = distance_array[pos-1] + 1
-
-        if self.rightmost_alignment_position - self.leftmost_alignment_position + 1 <= IMAGE_WIDTH:
-            return self.leftmost_alignment_position, self.rightmost_alignment_position
-
-        left_side = right_side = int((IMAGE_WIDTH-IMAGE_BUFFER) / 2)
-
-        left_val = max(0, distance_array[position] - left_side)
-        right_val = min(len(distance_array.keys()), distance_array[position] + right_side)
-        left_pos, right_pos = position, position
-
-        for pos in sorted(distance_array.keys()):
-            if distance_array[pos] < left_val:
-                left_pos = pos
-            if distance_array[pos] < right_val:
-                right_pos = pos
-
-        return left_pos, right_pos
-
-    def get_reference_row(self, start_pos, end_pos):
-        """
-        Get the reference row.
-        :param start_pos: Start position of the reference.
-        :param end_pos: End position of the reference
-        :return:
-        """
-        ref_row = [ImageChannels.get_empty_channels() for i in range(IMAGE_WIDTH)]
-        for i in range(start_pos, end_pos):
-            base = self.reference_dictionary[i]
-            if self.ref_to_index_projection[i] < IMAGE_WIDTH:
-                ref_row[self.ref_to_index_projection[i]] = ImageChannels.get_ref_channels(base)
-
-            if i in self.longest_insert_in_position:
-                for j in range(self.longest_insert_in_position[i]):
-                    if self.ref_to_index_projection[i] + j + 1 < IMAGE_WIDTH:
-                        ref_row[self.ref_to_index_projection[i]+j+1] = ImageChannels.get_ref_channels('*')
-
-        return ref_row
-
-    def _if_read_supports_alt(self, read_id, position, alt):
-        """
-        Check if read supports the alt allele in question
-        :param read_id: Read id
-        :param position: Position of the alt allele
-        :param alt: The alt allele
-        :return:
-        """
-        read_base = ''
-        if read_id in self.base_dictionary and position in self.base_dictionary[read_id]:
-            read_base += self.base_dictionary[read_id][position][0]
-        if len(alt) > 1 and read_id in self.insert_dictionary and position in self.insert_dictionary[read_id]:
-            read_base += self.insert_dictionary[read_id][position][0]
-
-        if read_base == alt:
+    def check_for_support(self, read_id, ref, alt, poi):
+        genomic_start_position = poi
+        genomic_end_position = poi + len(ref)
+        allele = ''
+        for pos in range(genomic_start_position, genomic_end_position):
+            if pos in self.read_dictionary[read_id]:
+                allele += self.read_dictionary[read_id][pos][0]
+            if len(alt) > 1 and read_id in self.read_insert_dictionary and pos in self.read_insert_dictionary[read_id]:
+                allele += self.read_insert_dictionary[read_id][pos][0]
+        allele = allele.replace('*', '')
+        alt = alt.replace('*', '')
+        if allele == alt:
             return True
-
         return False
 
-    def get_read_row(self, read_id, left_pos, right_pos, alts, alt_position):
-        """
-        Convert a read to an image row
-        :param read_id: Read id
-        :param left_pos: Leftmost position of the image
-        :param right_pos: Rightmost position of the image
-        :param alts: Alternate alleles
-        :param alt_position: Alternate allele position
-        :return:
-        """
-        image_row = [ImageChannels.get_empty_channels() for i in range(IMAGE_WIDTH)]
-        is_supporting = False
-        is_match = False
+    def get_row(self, read_id, poi, ref, alt):
+        read_list = {}
+        read_insert_list = {}
+        is_supporting = self.check_for_support(read_id, ref, alt, poi)
 
-        for alt in alts:
-            is_supporting = is_supporting or self._if_read_supports_alt(read_id, alt_position, alt)
+        aligned_positions = sorted(self.read_dictionary[read_id].keys())
+        for pos in aligned_positions:
+            read_list[pos] = []
+            read_list[pos].append(self.read_dictionary[read_id][pos])
 
-        for pos in range(left_pos, right_pos):
-            if read_id in self.base_dictionary and pos in self.base_dictionary[read_id]:
-                base, map_q, base_q, is_rev, cigar_op = self.base_dictionary[read_id][pos]
-                if base == self.reference_dictionary[pos]:
-                    is_match = True
+            if pos in self.insert_length_dictionary.keys() and self.insert_length_dictionary[pos] > 0:
+                read_insert_list[pos] = []
+                inserted_bases = 0
+                if read_id in self.read_insert_dictionary and pos in self.read_insert_dictionary[read_id]:
+                    inserted_bases = len(self.read_insert_dictionary[read_id][pos][0])
+                    read_insert_list[pos].append(self.read_insert_dictionary[read_id][pos])
 
-                attribute_tuple = (base, base_q, map_q, is_rev, is_match, is_supporting)
-                # create channels for the base in that position
-                channels = ImageChannels.get_channels(attribute_tuple)
-                if self.ref_to_index_projection[pos] < IMAGE_WIDTH:
-                    image_row[self.ref_to_index_projection[pos]] = channels
+                for i in range(inserted_bases, self.insert_length_dictionary[pos]):
+                    read_attribute_tuple = ('*', [BASE_QUALITY_CAP], self.read_dictionary[read_id][pos][2],
+                                            INSERT_CIGAR_CODE, self.read_dictionary[read_id][pos][4])
+                    read_insert_list[pos].append(read_attribute_tuple)
+        return read_list, read_insert_list, is_supporting
 
-            is_match = False
-            if read_id in self.insert_dictionary and pos in self.insert_dictionary[read_id]:
-                # if there is an insert
-                bases, map_q, base_qs, is_rev, cigar_op = self.insert_dictionary[read_id][pos]
-                row_index = self.ref_to_index_projection[pos] + 1
-
-                # for each base of the insert
-                for i, base in enumerate(bases):
-                    attribute_tuple = (base, base_qs[i], map_q, is_rev, is_match, is_supporting)
-                    channels = ImageChannels.get_channels(attribute_tuple)
-                    if row_index < IMAGE_WIDTH:
-                        image_row[row_index] = channels
-                    row_index += 1
-
-                # if the insert is not the longest insert of that position
-                if len(bases) < self.longest_insert_in_position[pos]:
-                    for i in range(self.longest_insert_in_position[pos]-len(bases)):
-                        attribute_tuple = ('*', 0, map_q, is_rev, is_match, is_supporting)
-                        channels = ImageChannels.get_channels(attribute_tuple)
-                        if row_index < IMAGE_WIDTH:
-                            image_row[row_index] = channels
-                        row_index += 1
-            # if there is an insert at this position but not in the read
-            elif pos in self.longest_insert_in_position:
-                row_index = self.ref_to_index_projection[pos] + 1
-                for i in range(self.longest_insert_in_position[pos]):
-                    attribute_tuple = ('*', 0, self.read_mq_dict[read_id], self.read_rev_dict[read_id], False, is_supporting)
-                    channels = ImageChannels.get_channels(attribute_tuple)
-                    if row_index < IMAGE_WIDTH:
-                        image_row[row_index] = channels
-                    row_index += 1
-
+    def get_reference_row_rgb(self, image_width):
+        image_row = [imageChannels.get_empty_rgb_channels() for i in range(image_width)]
+        for i in range(0, min(len(self.ref_sequence), image_width)):
+            image_row[i] = imageChannels.get_channels_for_ref_only_rgb(self.ref_sequence[i])
         return image_row
 
-    def generate_read_pileups(self, left_pos, right_pos, position, alts):
-        """
-        Generate rows for the reads that align to an allele position.
-        :param left_pos: Leftmost position in the image
-        :param right_pos: Rightmost position in the image
-        :param position: Alternate allele position
-        :param alts: Alternate alleles in question
-        :return:
-        """
-        all_read_ids = self.read_id_in_allele_position
-        image_rows = list()
-        for read_id in all_read_ids:
-            image_rows.append(self.get_read_row(read_id, left_pos, right_pos, alts, position))
-            if len(image_rows) == IMAGE_HEIGHT - REF_BAND:
-                break
+    def create_image_rgb(self, query_pos, image_height, image_width, ref_band, ref, alt):
+        in_support = 0
+        not_in_support = 0
+        whole_image = []
+        for i in range(ref_band):
+            whole_image.append(self.get_reference_row_rgb(image_width))
 
-        return image_rows
+        for read_id in self.reads_aligned_to_pos[query_pos]:
+            row_list, row_insert_list, is_supporting = self.get_row(read_id, query_pos, ref, alt)
+            in_support = in_support + 1 if is_supporting is True else in_support
+            not_in_support = not_in_support + 1 if is_supporting is False else not_in_support
 
-    def project_ref_positions(self, left_pos, right_pos):
-        """
-        Calculate the index where each reference position should go as inserts distort their positions.
-        :param left_pos: Leftmost genomic position in the image
-        :param right_pos: Rightmost genomic position in the image
-        :return:
-        """
-        index = 0
-        for pos in range(left_pos, right_pos):
-            self.ref_to_index_projection[pos] = index
-            if pos in self.longest_insert_in_position.keys():
-                index += self.longest_insert_in_position[pos]
-            index += 1
+            image_row = [imageChannels.get_empty_rgb_channels() for i in range(image_width)]
 
-    def _update_ref_sequence(self, start_position, end_position):
-        """
-        Update the reference sequence
-        :param start_position: Start position
-        :param end_position: End position
-        :return:
-        """
-        ref_sequence = self.fasta_handler.get_sequence(chromosome_name=self.chromosome_name,
-                                                       start=start_position,
-                                                       stop=end_position)
+            for position in sorted(row_list):
+                imagechannels_object = imageChannels(row_list[position][0], self.reference_base_projection[position],
+                                                     is_supporting)
+                if self.genomic_position_projection[position] < image_width:
+                    image_row[self.genomic_position_projection[position]] = imagechannels_object.get_channels_only_rgb()
 
-        for i, ref_base in enumerate(ref_sequence):
-            self._update_reference_dictionary(start_position + i, ref_base)
+                if position in row_insert_list.keys():
+                    insert_ref = 0
+                    for bases in row_insert_list[position]:
+                        for base_idx in range(len(bases[0])):
+                            insert_ref += 1
+                            attribute_tuple = (bases[0][base_idx], bases[1][base_idx], bases[2], bases[3])
+                            imagechannels_object = imageChannels(attribute_tuple, '*', is_supporting)
+                            if self.genomic_position_projection[position] + insert_ref < image_width:
+                                image_row[self.genomic_position_projection[position] + insert_ref] = \
+                                    imagechannels_object.get_channels_only_rgb()
 
-    def generate_image(self, position, alts):
-        """
-        Generate an image given allele position
-        :param position: Allele position
-        :param alts: Alternate alleles
-        :return:
-        """
-        left_pos, right_pos = self.get_start_and_end_positions(position)
-        self._update_ref_sequence(left_pos, right_pos)
-        self.project_ref_positions(left_pos, right_pos)
-        img_data = list()
-        for i in range(REF_BAND):
-            img_data.append(self.get_reference_row(left_pos, right_pos))
+            whole_image.append(image_row)
 
-        img_data = img_data + self.generate_read_pileups(left_pos, right_pos, position, [alts])
+        empty_rows_to_add = image_height - len(whole_image)
+        for i in range(empty_rows_to_add):
+            whole_image.append([imageChannels.get_empty_rgb_channels() for i in range(image_width)])
 
-        while len(img_data) < IMAGE_HEIGHT:
-            image_row = [ImageChannels.get_empty_channels() for i in range(IMAGE_WIDTH)]
-            img_data.append(image_row)
+        image_array = np.array(whole_image).astype(np.uint8)
+        img = Image.fromarray(image_array)
+        return img, in_support, not_in_support
 
-        image_array = np.array(img_data).astype(np.uint8)
+    # TEST FIVE CHANNELS
+    def get_reference_row(self, image_width):
+        image_row = [imageChannels.get_empty_channels() for i in range(image_width)]
+        for i in range(0, min(len(self.ref_sequence), image_width)):
+            image_row[i] = imageChannels.get_channels_for_ref(self.ref_sequence[i])
+        return image_row
 
-        return image_array
+    @staticmethod
+    def add_empty_rows(image, empty_rows_to_add, image_width):
+        for i in range(empty_rows_to_add):
+            image.append([imageChannels.get_empty_channels() for i in range(image_width)])
+        return image
+
+    def create_image(self, query_pos, ref, alt, image_height=300, image_width=300, ref_band=5):
+        whole_image = []
+        for i in range(ref_band):
+            whole_image.append(self.get_reference_row(image_width))
+
+        for read_id in self.reads_aligned_to_pos[query_pos]:
+            row_list, row_insert_list, is_supporting = self.get_row(read_id, query_pos, ref, alt)
+
+            image_row = [imageChannels.get_empty_channels() for i in range(image_width)]
+
+            filter_row = False
+            for position in sorted(row_list):
+                if row_list[position][0][2] < MAP_QUALITY_FILTER:
+                    filter_row = True
+                    break
+
+                imagechannels_object = imageChannels(row_list[position][0], self.reference_base_projection[position],
+                                                     is_supporting)
+
+                if self.genomic_position_projection[position] < image_width:
+                    image_row[self.genomic_position_projection[position]] = imagechannels_object.get_channels()
+
+                if position in row_insert_list.keys():
+                    insert_ref = 0
+                    for bases in row_insert_list[position]:
+                        for base_idx in range(len(bases[0])):
+                            insert_ref += 1
+                            attribute_tuple = (bases[0][base_idx], bases[1][base_idx], bases[2], bases[3], bases[4])
+                            imagechannels_object = imageChannels(attribute_tuple, '*', is_supporting)
+
+                            if self.genomic_position_projection[position] + insert_ref < image_width:
+                                image_row[self.genomic_position_projection[position] + insert_ref] = \
+                                    imagechannels_object.get_channels()
+
+            if filter_row is False and len(whole_image) < image_height:
+                whole_image.append(image_row)
+
+        whole_image = self.add_empty_rows(whole_image, image_height - len(whole_image), image_width)
+
+        image_array = np.array(whole_image).astype(np.uint8)
+        return image_array, image_array.shape
+

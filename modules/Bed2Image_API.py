@@ -1,7 +1,7 @@
 from modules.ImageCreator import ImageCreator
 from modules.BamHandler import BamHandler
 from modules.FastaHandler import FastaHandler
-
+import os
 
 class Bed2ImageAPI:
     """
@@ -13,7 +13,7 @@ class Bed2ImageAPI:
         self.fasta_handler = FastaHandler(reference_file_path)
 
     @staticmethod
-    def create_image(bam_handler, fasta_handler, bed_record):
+    def create_image(bam_handler, fasta_handler, bed_record, output_dir, file_name):
         """
         Create an image from a bed record
         :param bam_handler: Handles bam file
@@ -21,15 +21,15 @@ class Bed2ImageAPI:
         :param bed_record: Bed record
         :return: Imagearray, label
         """
-        chromosome_name, start_position, end_position, ref, alts, genotype = tuple(bed_record.rstrip().split('\t'))
+        chromosome_name, start_position, end_position, ref, alts, genotype, qual, g_filter, in_conf = \
+            tuple(bed_record.rstrip().split('\t'))
         start_position = int(start_position)
-        end_position = int(end_position)
         genotype = int(genotype)
 
-        reads = bam_handler.get_reads(chromosome_name=chromosome_name, start=start_position, stop=end_position+1)
-        image_creator = ImageCreator(fasta_handler, chromosome_name, start_position, end_position)
+        pileups = bam_handler.get_pileupcolumns_aligned_to_a_site(chromosome_name, start_position)
+        image_creator = ImageCreator(fasta_handler, pileups, chromosome_name, start_position, genotype, alts)
 
-        image_creator.process_reads(reads)
+        image_array, image_shape = image_creator.create_image(start_position, ref, alts)
+        image_creator.save_image_as_png(image_array, output_dir, file_name)
 
-        image_array = image_creator.generate_image(start_position, alts)
-        return image_array, genotype
+        return image_array, genotype, image_shape

@@ -1,10 +1,6 @@
-import argparse
-import os
 import sys
-
 import torch
 import time
-import numpy as np
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
@@ -14,15 +10,33 @@ import torchnet.meter as meter
 from modules.dataloader import DataSetLoader
 from modules.TextColor import TextColor
 from modules.model import Model
+from modules.inception import Inception3
+from image_analyzer import *
 np.set_printoptions(threshold=np.nan)
 
 NUM_CLASSES = 3
 
 
-def holdout_test(bam_file, ref_file, holdout_test_file, batch_size, gpu_mode, trained_model, max_threads):
+def handle_directory(directory_path):
+    """
+    Create a directory if doesn't exist
+    :param directory_path: path to the directory
+    :return: desired directory name
+    """
+    # if directory has no trailing '/' then add it
+    if directory_path[-1] != '/':
+        directory_path += '/'
+    # if directory doesn't exist then create it
+    if not os.path.exists(directory_path):
+        os.mkdir(directory_path)
+
+    return directory_path
+
+
+def holdout_test(bam_file, ref_file, holdout_test_file, batch_size, gpu_mode, trained_model, max_threads, img_op_dir):
     transformations = transforms.Compose([transforms.ToTensor()])
 
-    validation_data = DataSetLoader(bam_file, ref_file, holdout_test_file, transformations)
+    validation_data = DataSetLoader(bam_file, ref_file, holdout_test_file, img_op_dir, transformations)
     validation_loader = DataLoader(validation_data,
                                    batch_size=batch_size,
                                    shuffle=False,
@@ -44,9 +58,14 @@ def holdout_test(bam_file, ref_file, holdout_test_file, batch_size, gpu_mode, tr
     total_images = 0
     batches_done = 0
     confusion_matrix = meter.ConfusionMeter(NUM_CLASSES)
-    for i, (images, labels, bed_record) in enumerate(validation_loader):
+    for i, (images, labels, bed_record, summary_string) in enumerate(validation_loader):
         if gpu_mode is True and images.size(0) % 8 != 0:
             continue
+        if summary_string is not '':
+            summary_writer = open(img_op_dir + "summary" + ".csv", 'a+')
+            for line in summary_string:
+                summary_writer.write(line)
+            summary_writer.close()
 
         images = Variable(images, volatile=True)
         labels = Variable(labels, volatile=True)
@@ -88,24 +107,25 @@ def save_model_checkpoint(model, output_dir, epoch, optimizer, batch):
     }, output_dir + 'checkpoint_' + str(epoch + 1) + "." + str(batch + 1) + "_params.pkl")
 
 
-def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, output_dir, gpu_mode, max_threads):
+def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, output_dir, gpu_mode, img_op_dir, max_threads):
+    img_op_dir_train = handle_directory(img_op_dir+"train/")
+    img_op_dir_test = handle_directory(img_op_dir + "test/")
     transformations = transforms.Compose([transforms.ToTensor()])
-
     sys.stderr.write(TextColor.PURPLE + 'Loading data\n' + TextColor.END)
-    train_data_set = DataSetLoader(bam_file, ref_file, train_bed, transformations)
+    train_data_set = DataSetLoader(bam_file, ref_file, train_bed, img_op_dir_train, transformations)
     train_loader = DataLoader(train_data_set,
                               batch_size=batch_size,
-                              shuffle=True,
+                              shuffle=False,
                               num_workers=max_threads,
                               pin_memory=gpu_mode
                               )
     sys.stderr.write(TextColor.PURPLE + 'Data loading finished\n' + TextColor.END)
 
-    model = Model(inChannel=6, coverageDepth=300, classN=3, leak_value=0.0)
+    model = Inception3()
 
     # Loss and Optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=0.0001, weight_decay=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.0001)
     start_epoch = 0
 
     if gpu_mode:
@@ -116,11 +136,26 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
     for epoch in range(start_epoch, epoch_limit, 1):
         total_loss = 0
         total_images = 0
-        start_time = time.time()
         batches_done = 0
-        for i, (images, labels, bed_record) in enumerate(train_loader):
+        absolute_start = time.time()
+        start_time = time.time()
+        for i, (images, labels, bed_record, summary_string) in enumerate(train_loader):
             if gpu_mode is True and images.size(0) % 8 != 0:
                 continue
+            if summary_string is not '':
+                summary_writer = open(img_op_dir_train + "summary" + ".csv", 'a+')
+                for line in summary_string:
+                    summary_writer.write(line)
+                summary_writer.close()
+
+            # THIS BLOCK IS FOR TESTING #
+            # print(bed_record[0].replace('\t',' '))
+            # analyze_np_array(images[0])
+            # print('DATA LOADING TIME: ', i, (time.time()-start_time))
+            # start_time = time.time()
+            # start_time = time.time()
+            # exit()
+            # DO NOT REMOVE # - KISHWAR
 
             images = Variable(images)
             labels = Variable(labels)
@@ -149,13 +184,16 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
                 sys.stderr.write(TextColor.BLUE + "EPOCH: " + str(epoch+1) + " Batches done: " + str(batches_done)
                                  + " / " + str(len(train_loader)) + "\n" + TextColor.END)
                 sys.stderr.write(TextColor.YELLOW + " Loss: " + str(avg_loss) + "\n" + TextColor.END)
-                sys.stderr.write(TextColor.DARKCYAN + "Time Elapsed: " + str((time.time() - start_time)/60) +
-                                 " Mins \n" + TextColor.END)
+                sys.stderr.write(TextColor.DARKCYAN + "Time Elapsed: " + str((time.time() - start_time)) +
+                                 " Secs \n" + TextColor.END)
+                start_time = time.time()
 
         avg_loss = total_loss/total_images if total_images else 0
         sys.stderr.write(TextColor.BLUE + "EPOCH: " + str(epoch+1)
                          + " Batches done: " + str(i+1) + "/" + str(len(train_loader)) + "\n" + TextColor.END)
         sys.stderr.write(TextColor.YELLOW + " Loss: " + str(avg_loss) + "\n" + TextColor.END)
+        sys.stderr.write(TextColor.DARKCYAN + "Time Elapsed: " + str((time.time() - absolute_start)) +
+                         " Secs \n" + TextColor.END)
         print(str(epoch+1) + "\t" + str(i + 1) + "\t" + str(avg_loss))
 
         if (i+1) % 1000 == 0:
@@ -169,7 +207,7 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
         save_model_checkpoint(model, output_dir, epoch, optimizer, i + 1)
 
         # After each epoch do validation
-        holdout_test(bam_file, ref_file, val_bed, batch_size, gpu_mode, model, max_threads)
+        holdout_test(bam_file, ref_file, val_bed, batch_size, gpu_mode, model, max_threads, img_op_dir_test)
 
     sys.stderr.write(TextColor.PURPLE + 'Finished training\n' + TextColor.END)
 
@@ -247,6 +285,12 @@ if __name__ == '__main__':
         help="Path and file_name to save model, default is ./model"
     )
     parser.add_argument(
+        "--img_output_dir",
+        type=str,
+        default="output/",
+        help="Name of output directory to save images"
+    )
+    parser.add_argument(
         "--gpu_mode",
         type=bool,
         default=False,
@@ -260,7 +304,8 @@ if __name__ == '__main__':
         help="Maximum number of threads to use when loading data."
     )
     FLAGS, unparsed = parser.parse_known_args()
+    FLAGS.img_output_dir = handle_directory(FLAGS.img_output_dir)
 
     FLAGS.model_out = directory_control(FLAGS.model_out)
     train(FLAGS.bam, FLAGS.ref, FLAGS.train_bed, FLAGS.holdout_bed, FLAGS.batch_size,
-          FLAGS.epoch_size, FLAGS.model_out, FLAGS.gpu_mode, FLAGS.max_threads)
+          FLAGS.epoch_size, FLAGS.model_out, FLAGS.gpu_mode, FLAGS.img_output_dir, FLAGS.max_threads)
