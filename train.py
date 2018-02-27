@@ -115,7 +115,7 @@ def train(bam_file, ref_file, train_bed, val_bed, batch_size, epoch_limit, outpu
     train_data_set = DataSetLoader(bam_file, ref_file, train_bed, img_op_dir_train, transformations)
     train_loader = DataLoader(train_data_set,
                               batch_size=batch_size,
-                              shuffle=False,
+                              shuffle=True,
                               num_workers=max_threads,
                               pin_memory=gpu_mode
                               )
